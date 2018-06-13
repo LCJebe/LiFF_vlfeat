@@ -546,7 +546,7 @@ main(int argc, char **argv)
       }
 
       while (1) {
-        double x, y, s, th ;
+        double x, y, s, th, DogVal ;
 
         /* read next guy */
         err = vl_file_meta_get_double (&ifr, &x) ;
@@ -554,27 +554,29 @@ main(int argc, char **argv)
         else QERR ;
         err = vl_file_meta_get_double (&ifr, &y ) ; QERR ;
         err = vl_file_meta_get_double (&ifr, &s ) ; QERR ;
-        err = vl_file_meta_get_double (&ifr, &th) ;
+        err = vl_file_meta_get_double (&ifr, &th) ; QERR ;
+        err = vl_file_meta_get_double (&ifr, &DogVal) ;
         if   (err == VL_ERR_EOF) break;
         else QERR ;
 
         /* make enough space */
         if (ikeys_size < nikeys + 1) {
           ikeys_size += 10000 ;
-          ikeys       = realloc (ikeys, 4 * sizeof(double) * ikeys_size) ;
+          ikeys       = realloc (ikeys, 5 * sizeof(double) * ikeys_size) ;
         }
 
         /* add the guy to the buffer */
-        ikeys [4 * nikeys + 0]  = x ;
-        ikeys [4 * nikeys + 1]  = y ;
-        ikeys [4 * nikeys + 2]  = s ;
-        ikeys [4 * nikeys + 3]  = th ;
+        ikeys [5 * nikeys + 0]  = x ;
+        ikeys [5 * nikeys + 1]  = y ;
+        ikeys [5 * nikeys + 2]  = s ;
+        ikeys [5 * nikeys + 3]  = th ;
+        ikeys [5 * nikeys + 4]  = DogVal ;        
 
         ++ nikeys ;
       }
 
       /* now order by scale */
-      qsort (ikeys, nikeys, 4 * sizeof(double), korder) ;
+      qsort (ikeys, nikeys, 5 * sizeof(double), korder) ;
 
       if (verbose) {
         printf ("sift: read %d keypoints from '%s'\n", nikeys, ifr.name) ;
@@ -699,9 +701,10 @@ main(int argc, char **argv)
         /* obtain keypoint orientations ........................... */
         if (ikeys) {
           vl_sift_keypoint_init (filt, &ik,
-                                 ikeys [4 * i + 0],
-                                 ikeys [4 * i + 1],
-                                 ikeys [4 * i + 2]) ;
+                                 ikeys [5 * i + 0],
+                                 ikeys [5 * i + 1],
+                                 ikeys [5 * i + 2],
+                                 ikeys [5 * i + 4] ) ;
 
           if (ik.o != vl_sift_get_octave_index (filt)) {
             break ;
@@ -714,7 +717,7 @@ main(int argc, char **argv)
             nangles = vl_sift_calc_keypoint_orientations
               (filt, angles, k) ;
           } else {
-            angles [0] = ikeys [4 * i + 3] ;
+            angles [0] = ikeys [5 * i + 3] ;
             nangles    = 1 ;
           }
         } else {

@@ -39,6 +39,8 @@ typedef struct _VlSiftKeypoint
   float y ;     /**< y coordinate. */
   float s ;     /**< s coordinate. */
   float sigma ; /**< scale. */
+
+  float DogVal ; /**< value of scale space at this location */
 } VlSiftKeypoint ;
 
 /** ------------------------------------------------------------------
@@ -136,7 +138,8 @@ void  vl_sift_keypoint_init              (VlSiftFilt const *f,
                                           VlSiftKeypoint *k,
                                           double x,
                                           double y,
-                                          double sigma) ;
+                                          double sigma,
+                                          double DogVal ) ;
 /** @} */
 
 /** @name Retrieve data and parameters

@@ -117,10 +117,10 @@ check_sorted (double const * keys, vl_size nkeys)
 {
   vl_uindex k ;
   for (k = 0 ; k + 1 < nkeys ; ++ k) {
-    if (korder(keys, keys + 4) > 0) {
+    if (korder(keys, keys + 5) > 0) {
       return VL_FALSE ;
     }
-    keys += 4 ;
+    keys += 5 ;
   }
   return VL_TRUE ;
 }
@@ -134,7 +134,7 @@ mexFunction(int nout, mxArray *out[],
             int nin, const mxArray *in[])
 {
   enum {IN_I=0,IN_END} ;
-  enum {OUT_FRAMES=0, OUT_DESCRIPTORS} ;
+  enum {OUT_FRAMES=0, OUT_DOGBUFFINFO, OUT_DOGBUFF, OUT_DESCRIPTORS} ;
 
   int                verbose = 0 ;
   int                opt ;
@@ -168,7 +168,7 @@ mexFunction(int nout, mxArray *out[],
 
   if (nin < 1) {
     mexErrMsgTxt("One argument required.") ;
-  } else if (nout > 2) {
+  } else if (nout > 4) {
     mexErrMsgTxt("Too many output arguments.");
   }
 
@@ -238,15 +238,15 @@ mexFunction(int nout, mxArray *out[],
       break ;
 
     case opt_frames :
-      if (!vlmxIsMatrix(optarg, 4, -1)) {
-        mexErrMsgTxt("'Frames' must be a 4 x N matrix.") ;
+      if (!vlmxIsMatrix(optarg, 5, -1)) {
+        mexErrMsgTxt("'Frames' must be a 5 x N matrix.") ;
       }
       ikeys_array = mxDuplicateArray (optarg) ;
       nikeys      = mxGetN (optarg) ;
       ikeys       = mxGetPr (ikeys_array) ;
       if (! check_sorted (ikeys, nikeys)) {
-        qsort (ikeys, nikeys, 4 * sizeof(double), korder) ;
-      }
+        qsort (ikeys, nikeys, 5 * sizeof(double), korder) ;
+      } 
       break ;
 
     case opt_orientations :
@@ -271,9 +271,16 @@ mexFunction(int nout, mxArray *out[],
     double            *frames = 0 ;
     void              *descr  = 0 ;
     int                nframes = 0, reserved = 0, i,j,q ;
+	double* OctaveInfoOut = 0;
+	float* DogBuffOut = 0;
+	int DogBuffW = 0;
+	int DogBuffH = 0;
+	int DogBuffS = 0;
+	int DogBuffO = 0;
 
     /* create a filter to process the image */
     filt = vl_sift_new (M, N, O, S, o_min) ;
+
 
     if (peak_thresh >= 0) vl_sift_set_peak_thresh (filt, peak_thresh) ;
     if (edge_thresh >= 0) vl_sift_set_edge_thresh (filt, edge_thresh) ;
@@ -281,7 +288,32 @@ mexFunction(int nout, mxArray *out[],
     if (magnif      >= 0) vl_sift_set_magnif      (filt, magnif) ;
     if (window_size >= 0) vl_sift_set_window_size (filt, window_size) ;
 
+    OctaveInfoOut = mxRealloc (OctaveInfoOut, 3 * vl_sift_get_noctaves(filt) * sizeof(double) ) ;  // [width, height, nscales] x noct
+
+	if( nout > 2 )  //  set up to save dog buffer
+	{
+		DogBuffW = VL_SHIFT_LEFT (M,  -o_min) ;
+		DogBuffH = VL_SHIFT_LEFT (N, -o_min) ;
+		DogBuffS = (filt->s_max - filt->s_min);
+		DogBuffO = vl_sift_get_noctaves(filt);
+
+		int nel = DogBuffW * DogBuffH * DogBuffS * DogBuffO;
+		DogBuffOut = mxRealloc (DogBuffOut, nel * sizeof(float) ) ;
+
+		//mexPrintf( "allocated %d elements for output buffer\n", nel );
+	}
+
     if (verbose) {
+
+	  int w   = VL_SHIFT_LEFT (M,  -o_min) ;
+	  int h   = VL_SHIFT_LEFT (N, -o_min) ;
+	  int nel = w * h ;
+
+      mexPrintf( "vl_sift: s_max: %d; s_min: %d; w: %d; h:%d\n", filt->s_max, filt->s_min, w, h);
+	  mexPrintf ("vl_sift: alloc for octave: %d\n", nel * (filt->s_max - filt->s_min + 1) );
+	  mexPrintf ("vl_sift: alloc for dog: %d\n",    nel * (filt->s_max - filt->s_min    ) );
+	  mexPrintf ("vl_sift: alloc for grad: %d\n",   nel * 2 * (filt->s_max - filt->s_min) );   
+
       mexPrintf("vl_sift: filter settings:\n") ;
       mexPrintf("vl_sift:   octaves      (O)      = %d\n",
                 vl_sift_get_noctaves      (filt)) ;
@@ -319,7 +351,7 @@ mexFunction(int nout, mxArray *out[],
 
       if (verbose) {
         mexPrintf ("vl_sift: processing octave %d\n",
-                   vl_sift_get_octave_index (filt)) ;
+                   vl_sift_get_octave_index (filt));
       }
 
       /* Calculate the GSS for the next octave .................... */
@@ -335,11 +367,39 @@ mexFunction(int nout, mxArray *out[],
       if (verbose > 1) {
         mexPrintf("vl_sift: GSS octave %d computed\n",
                   vl_sift_get_octave_index (filt));
+
+        mexPrintf("vl_sift: Octave size : %d x %d\n",
+                  vl_sift_get_octave_width(filt), vl_sift_get_octave_height(filt));
       }
 
       /* Run detector ............................................. */
       if (nikeys < 0) {
+
+		{
+			int EntriesPerOct = DogBuffW*DogBuffH*DogBuffS;
+			memset( filt->dog, 0, EntriesPerOct*sizeof(float) );  // todo: remove
+		}
+
         vl_sift_detect (filt) ;
+
+		if( !first )
+		{
+			int CurOctIdx = vl_sift_get_octave_index (filt) - filt->o_min;
+			//mexPrintf ("saving to octave: %d\n", CurOctIdx);
+
+			OctaveInfoOut[ CurOctIdx*3 ] = vl_sift_get_octave_width(filt);
+			OctaveInfoOut[ CurOctIdx*3 + 1 ] = vl_sift_get_octave_height(filt);
+			OctaveInfoOut[ CurOctIdx*3 + 2 ] = DogBuffS;
+
+			if( nout > 2 )  // save dog buffer
+			{
+				int EntriesPerOct = DogBuffW*DogBuffH*DogBuffS;
+				int StartIdx = CurOctIdx * EntriesPerOct;
+				DogBuffOut[ StartIdx ] = 2000.0f + CurOctIdx;
+				memcpy( &(DogBuffOut[StartIdx]), filt->dog, EntriesPerOct*sizeof(float) );
+				//mexPrintf( "entries per oct: %d\n", EntriesPerOct );
+			}
+		}
 
         keys  = vl_sift_get_keypoints  (filt) ;
         nkeys = vl_sift_get_nkeypoints (filt) ;
@@ -362,9 +422,10 @@ mexFunction(int nout, mxArray *out[],
         /* Obtain keypoint orientations ........................... */
         if (nikeys >= 0) {
           vl_sift_keypoint_init (filt, &ik,
-                                 ikeys [4 * i + 1] - 1,
-                                 ikeys [4 * i + 0] - 1,
-                                 ikeys [4 * i + 2]) ;
+                                 ikeys [5 * i + 1] - 1,
+                                 ikeys [5 * i + 0] - 1,
+                                 ikeys [5 * i + 2],
+                                 ikeys [5 * i + 4] ) ;
 
           if (ik.o != vl_sift_get_octave_index (filt)) {
             break ;
@@ -377,7 +438,7 @@ mexFunction(int nout, mxArray *out[],
             nangles = vl_sift_calc_keypoint_orientations
               (filt, angles, k) ;
           } else {
-            angles [0] = VL_PI / 2 - ikeys [4 * i + 3] ;
+            angles [0] = VL_PI / 2 - ikeys [5 * i + 3] ;
             nangles    = 1 ;
           }
         } else {
@@ -392,7 +453,7 @@ mexFunction(int nout, mxArray *out[],
           vl_sift_pix rbuf [128] ;
 
           /* compute descriptor (if necessary) */
-          if (nout > 1) {
+          if (nout > 3) {  // save descriptors
             vl_sift_calc_keypoint_descriptor (filt, buf, k, angles [q]) ;
             transpose_descriptor (rbuf, buf) ;
           }
@@ -400,8 +461,8 @@ mexFunction(int nout, mxArray *out[],
           /* make enough room for all these keypoints and more */
           if (reserved < nframes + 1) {
             reserved += 2 * nkeys ;
-            frames = mxRealloc (frames, 4 * sizeof(double) * reserved) ;
-            if (nout > 1) {
+            frames = mxRealloc (frames, 9 * sizeof(double) * reserved) ;
+            if (nout > 3) { // descriptors
               if (! floatDescriptors) {
                 descr  = mxRealloc (descr,  128 * sizeof(vl_uint8) * reserved) ;
               } else {
@@ -412,12 +473,17 @@ mexFunction(int nout, mxArray *out[],
 
           /* Save back with MATLAB conventions. Notice tha the input
            * image was the transpose of the actual image. */
-          frames [4 * nframes + 0] = k -> y + 1 ;
-          frames [4 * nframes + 1] = k -> x + 1 ;
-          frames [4 * nframes + 2] = k -> sigma ;
-          frames [4 * nframes + 3] = VL_PI / 2 - angles [q] ;
+          frames [9 * nframes + 0] = k -> y + 1 ;
+          frames [9 * nframes + 1] = k -> x + 1 ;
+          frames [9 * nframes + 2] = k -> sigma ;
+          frames [9 * nframes + 3] = VL_PI / 2 - angles [q] ;
+          frames [9 * nframes + 4] = k -> DogVal ;
+          frames [9 * nframes + 5] = k -> ix ;
+          frames [9 * nframes + 6] = k -> iy ;
+          frames [9 * nframes + 7] = k -> is ;
+          frames [9 * nframes + 8] = k -> o ;
 
-          if (nout > 1) {
+          if (nout > 3) { // descriptors
             if (! floatDescriptors) {
               for (j = 0 ; j < 128 ; ++j) {
                 float x = 512.0F * rbuf [j] ;
@@ -438,7 +504,7 @@ mexFunction(int nout, mxArray *out[],
     } /* next octave */
 
     if (verbose) {
-      mexPrintf ("vl_sift: found %d keypoints\n", nframes) ;
+      mexPrintf ("vl_sift dd: found %d keypoints\n", nframes) ;
     }
 
     /* ...............................................................
@@ -455,13 +521,12 @@ mexFunction(int nout, mxArray *out[],
         (2, dims, mxDOUBLE_CLASS, mxREAL) ;
 
       /* set array content to be the frames buffer */
-      dims [0] = 4 ;
+      dims [0] = 9 ;
       dims [1] = nframes ;
       mxSetPr         (out[OUT_FRAMES], frames) ;
       mxSetDimensions (out[OUT_FRAMES], dims, 2) ;
 
-      if (nout > 1) {
-
+      if (nout > 3) { // descriptors
         /* create an empty array */
         dims [0] = 0 ;
         dims [1] = 0 ;
@@ -476,6 +541,44 @@ mexFunction(int nout, mxArray *out[],
         mxSetData       (out[OUT_DESCRIPTORS], descr) ;
         mxSetDimensions (out[OUT_DESCRIPTORS], dims, 2) ;
       }
+
+      if (nout > 1) { // dog array info
+        /* create an empty array */
+        dims [0] = 0 ;
+        dims [1] = 0 ;
+        out[OUT_DOGBUFFINFO]= mxCreateNumericArray
+          (2, dims,
+           mxDOUBLE_CLASS,
+           mxREAL) ;
+
+        /* set array content to be the descriptors buffer */
+        dims [0] = 3 ;
+        dims [1] = vl_sift_get_noctaves(filt);
+        mxSetData       (out[OUT_DOGBUFFINFO], OctaveInfoOut) ;
+        mxSetDimensions (out[OUT_DOGBUFFINFO], dims, 2) ;
+      }
+
+      if (nout > 2) { // dog buffer content
+        mwSize dims4 [4] ;
+        /* create an empty array */
+        dims4 [0] = 0 ;
+        dims4 [1] = 0 ;
+        dims4 [2] = 0 ;
+        dims4 [3] = 0 ;
+        out[OUT_DOGBUFF]= mxCreateNumericArray
+          (4, dims4,
+           mxSINGLE_CLASS,
+           mxREAL) ;
+
+        /* set array content to be the descriptors buffer */
+        dims4 [0] = DogBuffW;
+        dims4 [1] = DogBuffH;
+        dims4 [2] = DogBuffS;
+        dims4 [3] = DogBuffO;
+        mxSetData       (out[OUT_DOGBUFF], DogBuffOut) ;
+        mxSetDimensions (out[OUT_DOGBUFF], dims4, 4) ;
+      }
+
     }
 
     /* cleanup */

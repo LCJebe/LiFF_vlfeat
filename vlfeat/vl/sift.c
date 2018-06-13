@@ -1249,6 +1249,7 @@ vl_sift_detect (VlSiftFilt * f)
           k-> ix = x ;
           k-> iy = y ;
           k-> is = s ;
+		  k-> DogVal = 0 ;
         }
         pt += 1 ;
       }
@@ -1420,6 +1421,7 @@ vl_sift_detect (VlSiftFilt * f)
         k-> x     = xn * xper ;
         k-> y     = yn * xper ;
         k-> sigma = f->sigma0 * pow (2.0, sn/f->S) * xper ;
+        k->DogVal = val;
         ++ k ;
       }
 
@@ -2164,7 +2166,8 @@ vl_sift_keypoint_init (VlSiftFilt const *f,
                        VlSiftKeypoint *k,
                        double x,
                        double y,
-                       double sigma)
+                       double sigma,
+                       double DogVal )
 {
   int    o, ix, iy, is ;
   double s, phi, xper ;
@@ -2194,4 +2197,6 @@ vl_sift_keypoint_init (VlSiftFilt const *f,
   k -> s = s ;
 
   k->sigma = sigma ;
+  
+  k->DogVal = DogVal;
 }
